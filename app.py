@@ -149,7 +149,7 @@ with tab_control:
 
     if not df_otros.empty:
         for idx, row in df_otros.iterrows():
-            col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
+            col_nom, col_monto, col_estado, col_btn, col_del = st.columns([3, 2, 2, 2, 1])
             col_nom.write(f"**{row['descripcion']}**")
             col_monto.write(f"${row['monto']:.2f}")
             if row["estado"] == "PAGADO":
@@ -162,6 +162,11 @@ with tab_control:
                 if col_btn.button("Marcar Pagado", key=f"otro_c_{row['id']}"):
                     supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
                     st.rerun()
+            
+            # Botón para eliminar registro duplicado o no deseado
+            if col_del.button("🗑️", key=f"del_otro_{row['id']}", help="Eliminar este pago"):
+                supabase.table("otros_pagos").delete().eq("id", row["id"]).execute()
+                st.rerun()
 
 
 # ==========================================
@@ -171,21 +176,17 @@ with tab_alarmas:
     st.header("🚨 Alarmas y Prioridades (Atrasos de Meses Anteriores)")
     st.write(f"Muestra **únicamente** los pagos que quedaron vencidos de meses anteriores a **{mes_seleccionado} {anio_seleccionado}**.")
 
-    # Únicamente tomar los meses estrictamente anteriores al mes seleccionado
     meses_vencidos = meses[:idx_mes_actual]
 
     if meses_vencidos:
-        # Cargar pagos fijos pendientes de meses anteriores
         res_h_alarm = supabase.table("historial_pagos").select("*").in_("mes", meses_vencidos).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
         df_h_alarm = pd.DataFrame(res_h_alarm.data)
 
-        # Cargar otros pagos pendientes de meses anteriores
         res_o_alarm = supabase.table("otros_pagos").select("*").in_("mes", meses_vencidos).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
         df_o_alarm = pd.DataFrame(res_o_alarm.data)
 
         lista_resumen = []
 
-        # Procesar Pagos Fijos
         if not df_h_alarm.empty and not df_fijos.empty:
             df_fijos_alarm = pd.merge(df_fijos, df_h_alarm, left_on="id", right_on="pago_fijo_id")
             
@@ -204,7 +205,6 @@ with tab_alarmas:
                     "Monto Acumulado ($)": total_monto
                 })
 
-        # Procesar Otros Pagos / Emergentes
         if not df_o_alarm.empty:
             for desc_pago, group in df_o_alarm.groupby("descripcion"):
                 cant_cuotas = len(group)
@@ -290,7 +290,6 @@ with tab_deudas_fijas:
     st.header("📋 Registro de Deudas Fijas")
     st.write("Catálogo detallado de acreedores, compromisos financieros y plazos de pago.")
 
-    # Formulario para registrar nueva deuda fija
     with st.expander("➕ Registrar Nueva Deuda Fija"):
         with st.form("form_deuda_fija"):
             c_prov, c_tipo = st.columns(2)
