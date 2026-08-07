@@ -4,7 +4,7 @@ from datetime import datetime
 from supabase import create_client, Client
 
 # Configuración de página
-st.set_page_config(page_title="Control de Finanzas", page_icon="💰", layout="wide")
+st.set_page_config(page_title="Control de Finanzas - Lauren", page_icon="💰", layout="wide")
 
 # Conexión a Supabase
 url: str = st.secrets["SUPABASE_URL"]
@@ -16,11 +16,10 @@ st.title("💼 Sistema de Control Financiero")
 # --- NAVEGACIÓN POR PESTAÑAS ---
 tab_control, tab_deudas_fijas, tab_config = st.tabs([
     "📊 Control Mensual", 
-    "💳 Deudas Fijas 2026", 
+    "💳 Deudas Fijas", 
     "⚙️ Configurar Pagos Fijos"
 ])
 
-# Lista de meses para el sistema
 meses = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
 
 # ==========================================
@@ -57,7 +56,7 @@ with tab_control:
 
     df_completo = pd.merge(df_fijos, df_historial, left_on="id", right_on="pago_fijo_id", suffixes=("_base", "_mes")) if not df_historial.empty and not df_fijos.empty else pd.DataFrame()
 
-    # Saldo acumulado meses anteriores
+    # Saldo acumulado de meses anteriores
     idx_mes_actual = meses.index(mes_seleccionado)
     meses_anteriores = meses[:idx_mes_actual]
     pendiente_meses_anteriores = 0.0
@@ -81,30 +80,42 @@ with tab_control:
     total_pagado_mes = monto_fijo_pag + monto_otros_pag
     total_global_conseguir = pendiente_meses_anteriores + pendiente_mes_actual
 
-    # Alerta
+    # TARJETA FORMATO VISUAL DE RESUMEN
     if pendiente_meses_anteriores > 0:
-        st.warning(f"⚠️ **Lauren**, de meses anteriores tienes **${pendiente_meses_anteriores:,.2f}** pendientes. Sumado a **{mes_seleccionado}** (${pendiente_mes_actual:,.2f}), el total global a conseguir es: **${total_global_conseguir:,.2f}**")
+        st.markdown(
+            f"""
+            <div style="background-color: #FFF3CD; border-left: 6px solid #FFC107; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+                <h4 style="margin:0; color: #856404;">📌 Resumen Personal de Pagos acumulados</h4>
+                <p style="margin: 10px 0 0 0; font-size: 16px; color: #856404; line-height: 1.5;">
+                    <strong>Lauren</strong> debes la cantidad de <strong>${pendiente_meses_anteriores:,.2f}</strong> de los meses anteriores, sumado esa cantidad con lo proyectado de este mes ({mes_seleccionado}) más otros préstamos se hace un total de <strong>${total_global_conseguir:,.2f}</strong>.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
     else:
-        st.success(f"👏 **¡Al día con meses anteriores!** Para **{mes_seleccionado}** necesitas conseguir: **${total_global_conseguir:,.2f}**")
+        st.markdown(
+            f"""
+            <div style="background-color: #D4EDDA; border-left: 6px solid #28A745; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+                <h4 style="margin:0; color: #155724;">👏 ¡Al Día con Meses Anteriores!</h4>
+                <p style="margin: 10px 0 0 0; font-size: 16px; color: #155724; line-height: 1.5;">
+                    <strong>Lauren</strong> no tienes deudas pendientes de meses anteriores. Para el mes de <strong>{mes_seleccionado}</strong> el total proyectado a conseguir es de <strong>${total_global_conseguir:,.2f}</strong>.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-    # Métricas
+    # TARJETAS DE MÉTRICAS REFORMULADAS
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🚨 ANTERIORES PENDIENTES", f"${pendiente_meses_anteriores:,.2f}")
-    c2.metric("📅 MES ACTUAL PENDIENTE", f"${pendiente_mes_actual:,.2f}")
-    c3.metric("🔥 TOTAL A CONSEGUIR", f"${total_global_conseguir:,.2f}")
-    c4.metric("✅ PAGADO ESTE MES", f"${total_pagado_mes:,.2f}")
-
-    # Gráfico
-    df_grafico = pd.DataFrame({
-        "Categoría": ["Meses Anteriores", f"{mes_seleccionado} (Pendiente)", f"{mes_seleccionado} (Pagado)"],
-        "Monto ($)": [pendiente_meses_anteriores, pendiente_mes_actual, total_pagado_mes]
-    })
-    st.subheader("📈 Balance de Dinero Pendiente vs Pagado")
-    st.bar_chart(df_grafico.set_index("Categoría"))
+    c1.metric("🚨 PAGOS PENDIENTES DE MESES ANTERIORES", f"${pendiente_meses_anteriores:,.2f}")
+    c2.metric(f"📅 PENDIENTE {mes_seleccionado}", f"${pendiente_mes_actual:,.2f}")
+    c3.metric(f"🔥 TOTAL A CONSEGUIR A FINAL DE {mes_seleccionado}", f"${total_global_conseguir:,.2f}")
+    c4.metric(f"✅ PAGADO ESTE MES DE {mes_seleccionado}", f"${total_pagado_mes:,.2f}")
 
     st.divider()
 
-    # Listado Pagos Fijos
+    # LISTADO PAGOS FIJOS
     st.subheader(f"1. Pagos Fijos Mensuales - {mes_seleccionado}")
     if not df_completo.empty:
         for idx, row in df_completo.iterrows():
@@ -117,15 +128,15 @@ with tab_control:
                     supabase.table("historial_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
             else:
-                col_estado.warning("PENDIENTE")
+                col_estado.error("PENDIENTE") # Rojo para pendiente
                 if col_btn.button("Marcar Pagado", key=f"fijo_c_{row['id_mes']}"):
                     supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
 
     st.divider()
 
-    # Otros pagos
-    st.subheader(f"2. OTROS PAGOS (Emergentes / Préstamos) - {mes_seleccionado}")
+    # OTROS PAGOS (EMERGENTES)
+    st.subheader(f"2. OTROS PAGOS (Préstamos / Gastos Emergentes) - {mes_seleccionado}")
     with st.expander("➕ Agregar nuevo pago emergente"):
         with st.form("form_nuevo_otro"):
             desc = st.text_input("Descripción del pago:")
@@ -146,24 +157,24 @@ with tab_control:
                     supabase.table("otros_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id"]).execute()
                     st.rerun()
             else:
-                col_estado.warning("PENDIENTE")
+                col_estado.error("PENDIENTE") # Rojo para pendiente
                 if col_btn.button("Marcar Pagado", key=f"otro_c_{row['id']}"):
                     supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
                     st.rerun()
 
 
 # ==========================================
-# PESTAÑA 2: DEUDAS FIJAS 2026
+# PESTAÑA 2: DEUDAS FIJAS
 # ==========================================
 with tab_deudas_fijas:
-    st.header("📋 Registro de Deudas Fijas 2026")
+    st.header("📋 Registro de Deudas Fijas")
     st.write("Catálogo detallado de acreedores, compromisos financieros y plazos de pago.")
 
     # Formulario para registrar nueva deuda fija
-    with st.expander("➕ Registrar Nueva Deuda Fija 2026"):
+    with st.expander("➕ Registrar Nueva Deuda Fija"):
         with st.form("form_deuda_fija"):
             c_prov, c_tipo = st.columns(2)
-            proveedor = c_prov.text_input("Proveedor / Acreedor (Ej: Banco BAC, Financiera, Particular):")
+            proveedor = c_prov.text_input("Proveedor / Acreedor (Ej: Banco BAC, Financiera):")
             tipo_deuda = c_tipo.selectbox("Tipo de Deuda:", ["Tarjeta de Crédito", "Préstamo Bancario", "Préstamo Personal", "Servicio Fijo", "Otro"])
             
             c_nom, c_cuota = st.columns(2)
@@ -188,7 +199,6 @@ with tab_deudas_fijas:
                 st.success(f"Deuda '{nombre_deuda}' registrada con éxito.")
                 st.rerun()
 
-    # Tabla de consulta
     res_deudas = supabase.table("deudas_fijas").select("*").order("created_at", desc=False).execute()
     df_df = pd.DataFrame(res_deudas.data)
 
@@ -196,41 +206,84 @@ with tab_deudas_fijas:
         total_monto_real = df_df["monto_real_adeudado"].sum()
         total_cuotas = df_df["cuota_mensual"].sum()
         
+        # CUADROS COLORIDOS DE METRICAS
         col_t1, col_t2 = st.columns(2)
-        col_t1.metric("💰 TOTAL GLOBAL ADEUDADO", f"${total_monto_real:,.2f}")
-        col_t2.metric("🗓️ SUMA DE CUOTAS MENSUALES", f"${total_cuotas:,.2f}")
+        col_t1.markdown(
+            f"""
+            <div style="background-color: #E3F2FD; border: 2px solid #2196F3; padding: 15px; border-radius: 10px; text-align: center;">
+                <h5 style="color: #0D47A1; margin: 0;">💰 TOTAL MONTO REAL ADEUDADO</h5>
+                <h2 style="color: #1565C0; margin: 5px 0 0 0;">${total_monto_real:,.2f}</h2>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        col_t2.markdown(
+            f"""
+            <div style="background-color: #F3E5F5; border: 2px solid #9C27B0; padding: 15px; border-radius: 10px; text-align: center;">
+                <h5 style="color: #4A148C; margin: 0;">🗓️ SUMA TOTAL DE CUOTAS MENSUALES</h5>
+                <h2 style="color: #7B1FA2; margin: 5px 0 0 0;">${total_cuotas:,.2f}</h2>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         st.subheader("Detalle de Deudas Registradas")
         
         for idx, row in df_df.iterrows():
             with st.container():
                 st.markdown(f"### {row['nombre']} — *{row['proveedor']}*")
-                col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns([2, 2, 2, 2, 1])
+                col_d1, col_d2, col_d3, col_d4 = st.columns([2, 2, 2, 2])
                 
                 col_d1.write(f"**Tipo:** {row['tipo_deuda']}")
-                col_d2.write(f"**Cuota:** ${row['cuota_mensual']:,.2f}")
+                col_d2.write(f"**Cuota Mensual:** ${row['cuota_mensual']:,.2f}")
                 col_d3.write(f"**Día de Pago:** {row['fecha_pago']}")
                 col_d4.write(f"**Monto Real:** ${row['monto_real_adeudado']:,.2f}")
                 
-                if col_d5.button("🗑️ Eliminar", key=f"del_df_{row['id']}"):
-                    supabase.table("deudas_fijas").delete().eq("id", row["id"]).execute()
-                    st.success("Deuda eliminada")
-                    st.rerun()
+                # Botones de Acción (Editar y Eliminar)
+                col_b1, col_b2 = st.columns([1, 1])
+                with col_b1:
+                    with st.expander("✏️ Editar Deuda"):
+                        with st.form(f"form_edit_deuda_{row['id']}"):
+                            e_prov = st.text_input("Proveedor:", value=row['proveedor'])
+                            e_nom = st.text_input("Nombre Deuda:", value=row['nombre'])
+                            e_tipo = st.selectbox("Tipo:", ["Tarjeta de Crédito", "Préstamo Bancario", "Préstamo Personal", "Servicio Fijo", "Otro"], index=0)
+                            e_cuota = st.number_input("Cuota Mensual ($):", value=float(row['cuota_mensual']), step=10.0)
+                            e_fecha_p = st.selectbox("Fecha Pago:", ["15 de cada mes", "30 de cada mes"], index=0 if row['fecha_pago']=="15 de cada mes" else 1)
+                            e_monto_r = st.number_input("Monto Real Adeudado ($):", value=float(row['monto_real_adeudado']), step=50.0)
+                            
+                            if st.form_submit_button("Guardar Cambios"):
+                                supabase.table("deudas_fijas").update({
+                                    "proveedor": e_prov,
+                                    "nombre": e_nom,
+                                    "tipo_deuda": e_tipo,
+                                    "cuota_mensual": e_cuota,
+                                    "fecha_pago": e_fecha_p,
+                                    "monto_real_adeudado": e_monto_r
+                                }).eq("id", row['id']).execute()
+                                st.success("Deuda actualizada correctamente.")
+                                st.rerun()
+
+                with col_b2:
+                    if st.button("🗑️ Eliminar Deuda", key=f"del_df_{row['id']}"):
+                        supabase.table("deudas_fijas").delete().eq("id", row["id"]).execute()
+                        st.success("Deuda eliminada")
+                        st.rerun()
+
                 st.caption(f"Fecha Fin: {row['fecha_fin']}")
                 st.divider()
     else:
-        st.info("No hay deudas fijas registradas aún. Agrega una desde el formulario superior.")
+        st.info("No hay deudas fijas registradas. Agrega una con el formulario superior.")
 
 
 # ==========================================
-# PESTAÑA 3: CONFIGURAR PAGOS FIJOS (CATÁLOGO)
+# PESTAÑA 3: CONFIGURAR PAGOS FIJOS
 # ==========================================
 with tab_config:
     st.header("⚙️ Gestión del Catálogo de Pagos Fijos Mensuales")
-    st.write("Agrega o elimina compromisos del listado recurrente mensual.")
+    st.write("Agrega, modifica o elimina compromisos del listado recurrente mensual.")
 
-    # Formulario para agregar una nueva categoría de Pago Fijo
-    with st.expander("➕ Agregar Nueva Categoría o Deuda al Catálogo"):
+    # Formulario para agregar nueva categoría
+    with st.expander("➕ Agregar Nueva Categoría al Catálogo"):
         with st.form("form_nueva_cat_fija"):
             nom_cat = st.text_input("Nombre del Pago Fijo (Ej: Casa, Agua, Tarjeta BAC):")
             monto_cat = st.number_input("Monto por Defecto ($):", min_value=0.0, step=10.0)
@@ -245,15 +298,30 @@ with tab_config:
     st.subheader("Catálogo Actual")
     if not df_fijos.empty:
         for idx, row in df_fijos.iterrows():
-            col_c1, col_c2, col_c3 = st.columns([4, 3, 2])
+            col_c1, col_c2, col_c3, col_c4 = st.columns([3, 2, 2, 2])
             col_c1.write(f"**{row['nombre']}**")
             col_c2.write(f"Monto por defecto: **${row['monto_defecto']:.2f}**")
             
-            if col_c3.button("🗑️ Eliminar", key=f"del_pf_{row['id']}"):
-                # Eliminar de pagos_fijos y su historial
-                supabase.table("historial_pagos").delete().eq("pago_fijo_id", row["id"]).execute()
-                supabase.table("pagos_fijos").delete().eq("id", row["id"]).execute()
-                st.success(f"Categoría '{row['nombre']}' eliminada.")
-                st.rerun()
+            # Opción Modificar
+            with col_c3:
+                with st.expander("✏️ Modificar"):
+                    with st.form(f"form_mod_pf_{row['id']}"):
+                        mod_nombre = st.text_input("Nombre:", value=row['nombre'])
+                        mod_monto = st.number_input("Monto Defecto ($):", value=float(row['monto_defecto']), step=5.0)
+                        if st.form_submit_button("Guardar"):
+                            supabase.table("pagos_fijos").update({
+                                "nombre": mod_nombre,
+                                "monto_defecto": mod_monto
+                            }).eq("id", row['id']).execute()
+                            st.success("Modificado")
+                            st.rerun()
+
+            # Opción Eliminar
+            with col_c4:
+                if st.button("🗑️ Eliminar", key=f"del_pf_{row['id']}"):
+                    supabase.table("historial_pagos").delete().eq("pago_fijo_id", row["id"]).execute()
+                    supabase.table("pagos_fijos").delete().eq("id", row["id"]).execute()
+                    st.success(f"Categoría '{row['nombre']}' eliminada.")
+                    st.rerun()
     else:
         st.info("El catálogo de pagos fijos está vacío.")
