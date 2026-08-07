@@ -1,136 +1,259 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from supabase import create_client, Client
 
-# Configuración de página de Streamlit
-st.set_page_config(page_title="Control de Pagos Mensuales", page_icon="💰", layout="wide")
+# Configuración de página
+st.set_page_config(page_title="Control de Finanzas", page_icon="💰", layout="wide")
 
 # Conexión a Supabase
 url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-st.title("📊 Control de Pagos y Finanzas Mensuales")
+st.title("💼 Sistema de Control Financiero")
 
-# --- SELECTOR DE MES Y AÑO ---
-col_mes, col_anio = st.columns(2)
-meses = ["FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
+# --- NAVEGACIÓN POR PESTAÑAS ---
+tab_control, tab_deudas_fijas, tab_config = st.tabs([
+    "📊 Control Mensual", 
+    "💳 Deudas Fijas 2026", 
+    "⚙️ Configurar Pagos Fijos"
+])
 
-with col_mes:
-    mes_seleccionado = st.selectbox("Selecciona el Mes:", meses, index=6) # Agosto por defecto
+# Lista de meses para el sistema
+meses = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
 
-with col_anio:
-    anio_seleccionado = st.selectbox("Selecciona el Año:", [2026, 2027], index=0)
+# ==========================================
+# PESTAÑA 1: CONTROL MENSUAL DE PAGOS
+# ==========================================
+with tab_control:
+    col_mes, col_anio = st.columns(2)
+    with col_mes:
+        mes_seleccionado = st.selectbox("Selecciona el Mes:", meses, index=7) # Agosto por defecto
+    with col_anio:
+        anio_seleccionado = st.selectbox("Selecciona el Año:", [2026, 2027], index=0)
 
-st.divider()
+    st.divider()
 
-# --- CARGAR DATOS DE SUPABASE ---
-def obtener_pagos_fijos():
-    res = supabase.table("pagos_fijos").select("*").execute()
-    return pd.DataFrame(res.data)
+    # Carga de datos
+    res_fijos = supabase.table("pagos_fijos").select("*").execute()
+    df_fijos = pd.DataFrame(res_fijos.data)
 
-def obtener_historial_mes(mes, anio):
-    res = supabase.table("historial_pagos").select("*").eq("mes", mes).eq("anio", anio).execute()
-    return pd.DataFrame(res.data)
+    res_hist = supabase.table("historial_pagos").select("*").eq("mes", mes_seleccionado).eq("anio", anio_seleccionado).execute()
+    df_historial = pd.DataFrame(res_hist.data)
 
-def obtener_otros_pagos_mes(mes, anio):
-    res = supabase.table("otros_pagos").select("*").eq("mes", mes).eq("anio", anio).execute()
-    return pd.DataFrame(res.data)
+    res_otros = supabase.table("otros_pagos").select("*").eq("mes", mes_seleccionado).eq("anio", anio_seleccionado).execute()
+    df_otros = pd.DataFrame(res_otros.data)
 
-df_fijos = obtener_pagos_fijos()
-df_historial = obtener_historial_mes(mes_seleccionado, anio_seleccionado)
-df_otros = obtener_otros_pagos_mes(mes_seleccionado, anio_seleccionado)
+    # Auto-crear registros del mes si no existen
+    if df_historial.empty and not df_fijos.empty:
+        nuevos_registros = [
+            {"pago_fijo_id": row["id"], "mes": mes_seleccionado, "anio": anio_seleccionado, "monto": row["monto_defecto"], "estado": "PENDIENTE"}
+            for _, row in df_fijos.iterrows()
+        ]
+        supabase.table("historial_pagos").insert(nuevos_registros).execute()
+        res_hist = supabase.table("historial_pagos").select("*").eq("mes", mes_seleccionado).eq("anio", anio_seleccionado).execute()
+        df_historial = pd.DataFrame(res_hist.data)
 
-# Si el mes no tiene registros inicializados, crearlos automáticamente desde pagos_fijos
-if df_historial.empty and not df_fijos.empty:
-    registros_nuevos = [
-        {"pago_fijo_id": row["id"], "mes": mes_seleccionado, "anio": anio_seleccionado, "monto": row["monto_defecto"], "estado": "PENDIENTE"}
-        for _, row in df_fijos.iterrows()
-    ]
-    supabase.table("historial_pagos").insert(registros_nuevos).execute()
-    df_historial = obtener_historial_mes(mes_seleccionado, anio_seleccionado)
+    df_completo = pd.merge(df_fijos, df_historial, left_on="id", right_on="pago_fijo_id", suffixes=("_base", "_mes")) if not df_historial.empty and not df_fijos.empty else pd.DataFrame()
 
-# Unir catálogo fijo con el historial del mes
-if not df_historial.empty and not df_fijos.empty:
-    df_completo = pd.merge(df_fijos, df_historial, left_on="id", right_on="pago_fijo_id", suffixes=("_base", "_mes"))
-else:
-    df_completo = pd.DataFrame()
+    # Saldo acumulado meses anteriores
+    idx_mes_actual = meses.index(mes_seleccionado)
+    meses_anteriores = meses[:idx_mes_actual]
+    pendiente_meses_anteriores = 0.0
 
-# --- MÉTRICAS / TARJETAS (CÁLCULO AUTOMÁTICO) ---
-monto_fijo_pendiente = df_completo[df_completo["estado"] == "PENDIENTE"]["monto"].sum() if not df_completo.empty else 0
-monto_otros_pendiente = df_otros[df_otros["estado"] == "PENDIENTE"]["monto"].sum() if not df_otros.empty else 0
-monto_fijo_pagado = df_completo[df_completo["estado"] == "PAGADO"]["monto"].sum() if not df_completo.empty else 0
-monto_otros_pagado = df_otros[df_otros["estado"] == "PAGADO"]["monto"].sum() if not df_otros.empty else 0
+    if meses_anteriores:
+        res_h_ant = supabase.table("historial_pagos").select("monto").in_("mes", meses_anteriores).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
+        if res_h_ant.data:
+            pendiente_meses_anteriores += sum([item["monto"] for item in res_h_ant.data])
 
-total_necesito_conseguir = monto_fijo_pendiente + monto_otros_pendiente
-total_pagado = monto_fijo_pagado + monto_otros_pagado
+        res_o_ant = supabase.table("otros_pagos").select("monto").in_("mes", meses_anteriores).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
+        if res_o_ant.data:
+            pendiente_meses_anteriores += sum([item["monto"] for item in res_o_ant.data])
 
-c1, c2, c3 = st.columns(3)
-c1.metric("🎯 NECESITO CONSEGUIR", f"${total_necesito_conseguir:,.2f}")
-c2.metric("✅ TOTAL PAGADO", f"${total_pagado:,.2f}")
-c3.metric("📌 TOTAL PROYECTADO DEL MES", f"${(total_necesito_conseguir + total_pagado):,.2f}")
+    # Cálculos del mes actual
+    monto_fijo_pen = df_completo[df_completo["estado"] == "PENDIENTE"]["monto"].sum() if not df_completo.empty else 0.0
+    monto_otros_pen = df_otros[df_otros["estado"] == "PENDIENTE"]["monto"].sum() if not df_otros.empty else 0.0
+    monto_fijo_pag = df_completo[df_completo["estado"] == "PAGADO"]["monto"].sum() if not df_completo.empty else 0.0
+    monto_otros_pag = df_otros[df_otros["estado"] == "PAGADO"]["monto"].sum() if not df_otros.empty else 0.0
 
-st.divider()
+    pendiente_mes_actual = monto_fijo_pen + monto_otros_pen
+    total_pagado_mes = monto_fijo_pag + monto_otros_pag
+    total_global_conseguir = pendiente_meses_anteriores + pendiente_mes_actual
 
-# --- SECCIÓN 1: PAGOS FIJOS MENSUALES ---
-st.subheader("1. Pagos Fijos Mensuales")
+    # Alerta
+    if pendiente_meses_anteriores > 0:
+        st.warning(f"⚠️ **Lauren**, de meses anteriores tienes **${pendiente_meses_anteriores:,.2f}** pendientes. Sumado a **{mes_seleccionado}** (${pendiente_mes_actual:,.2f}), el total global a conseguir es: **${total_global_conseguir:,.2f}**")
+    else:
+        st.success(f"👏 **¡Al día con meses anteriores!** Para **{mes_seleccionado}** necesitas conseguir: **${total_global_conseguir:,.2f}**")
 
-if not df_completo.empty:
-    for idx, row in df_completo.iterrows():
-        col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
-        col_nom.write(f"**{row['nombre']}**")
-        col_monto.write(f"${row['monto']:.2f}")
+    # Métricas
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🚨 ANTERIORES PENDIENTES", f"${pendiente_meses_anteriores:,.2f}")
+    c2.metric("📅 MES ACTUAL PENDIENTE", f"${pendiente_mes_actual:,.2f}")
+    c3.metric("🔥 TOTAL A CONSEGUIR", f"${total_global_conseguir:,.2f}")
+    c4.metric("✅ PAGADO ESTE MES", f"${total_pagado_mes:,.2f}")
+
+    # Gráfico
+    df_grafico = pd.DataFrame({
+        "Categoría": ["Meses Anteriores", f"{mes_seleccionado} (Pendiente)", f"{mes_seleccionado} (Pagado)"],
+        "Monto ($)": [pendiente_meses_anteriores, pendiente_mes_actual, total_pagado_mes]
+    })
+    st.subheader("📈 Balance de Dinero Pendiente vs Pagado")
+    st.bar_chart(df_grafico.set_index("Categoría"))
+
+    st.divider()
+
+    # Listado Pagos Fijos
+    st.subheader(f"1. Pagos Fijos Mensuales - {mes_seleccionado}")
+    if not df_completo.empty:
+        for idx, row in df_completo.iterrows():
+            col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
+            col_nom.write(f"**{row['nombre']}**")
+            col_monto.write(f"${row['monto']:.2f}")
+            if row["estado"] == "PAGADO":
+                col_estado.success("PAGADO")
+                if col_btn.button("Marcar Pendiente", key=f"fijo_p_{row['id_mes']}"):
+                    supabase.table("historial_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id_mes"]).execute()
+                    st.rerun()
+            else:
+                col_estado.warning("PENDIENTE")
+                if col_btn.button("Marcar Pagado", key=f"fijo_c_{row['id_mes']}"):
+                    supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
+                    st.rerun()
+
+    st.divider()
+
+    # Otros pagos
+    st.subheader(f"2. OTROS PAGOS (Emergentes / Préstamos) - {mes_seleccionado}")
+    with st.expander("➕ Agregar nuevo pago emergente"):
+        with st.form("form_nuevo_otro"):
+            desc = st.text_input("Descripción del pago:")
+            monto_i = st.number_input("Monto en $:", min_value=0.0, step=1.0)
+            if st.form_submit_button("Guardar Pago") and desc and monto_i > 0:
+                supabase.table("otros_pagos").insert({"descripcion": desc, "monto": monto_i, "mes": mes_seleccionado, "anio": anio_seleccionado, "estado": "PENDIENTE"}).execute()
+                st.success("Guardado")
+                st.rerun()
+
+    if not df_otros.empty:
+        for idx, row in df_otros.iterrows():
+            col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
+            col_nom.write(f"**{row['descripcion']}**")
+            col_monto.write(f"${row['monto']:.2f}")
+            if row["estado"] == "PAGADO":
+                col_estado.success("PAGADO")
+                if col_btn.button("Marcar Pendiente", key=f"otro_p_{row['id']}"):
+                    supabase.table("otros_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id"]).execute()
+                    st.rerun()
+            else:
+                col_estado.warning("PENDIENTE")
+                if col_btn.button("Marcar Pagado", key=f"otro_c_{row['id']}"):
+                    supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
+                    st.rerun()
+
+
+# ==========================================
+# PESTAÑA 2: DEUDAS FIJAS 2026
+# ==========================================
+with tab_deudas_fijas:
+    st.header("📋 Registro de Deudas Fijas 2026")
+    st.write("Catálogo detallado de acreedores, compromisos financieros y plazos de pago.")
+
+    # Formulario para registrar nueva deuda fija
+    with st.expander("➕ Registrar Nueva Deuda Fija 2026"):
+        with st.form("form_deuda_fija"):
+            c_prov, c_tipo = st.columns(2)
+            proveedor = c_prov.text_input("Proveedor / Acreedor (Ej: Banco BAC, Financiera, Particular):")
+            tipo_deuda = c_tipo.selectbox("Tipo de Deuda:", ["Tarjeta de Crédito", "Préstamo Bancario", "Préstamo Personal", "Servicio Fijo", "Otro"])
+            
+            c_nom, c_cuota = st.columns(2)
+            nombre_deuda = c_nom.text_input("Nombre / Descripción de la Deuda:")
+            cuota_m = c_cuota.number_input("Cuota Mensual ($):", min_value=0.0, step=10.0)
+            
+            c_fecha_p, c_fecha_f, c_monto_r = st.columns(3)
+            fecha_pago = c_fecha_p.selectbox("Fecha de Pago:", ["15 de cada mes", "30 de cada mes"])
+            fecha_fin = c_fecha_f.date_input("Fecha Fin de Deuda:")
+            monto_real = c_monto_r.number_input("Monto Real Adeudado ($):", min_value=0.0, step=50.0)
+
+            if st.form_submit_button("Guardar Deuda Fija") and proveedor and nombre_deuda:
+                supabase.table("deudas_fijas").insert({
+                    "proveedor": proveedor,
+                    "tipo_deuda": tipo_deuda,
+                    "nombre": nombre_deuda,
+                    "cuota_mensual": cuota_m,
+                    "fecha_pago": fecha_pago,
+                    "fecha_fin": str(fecha_fin),
+                    "monto_real_adeudado": monto_real
+                }).execute()
+                st.success(f"Deuda '{nombre_deuda}' registrada con éxito.")
+                st.rerun()
+
+    # Tabla de consulta
+    res_deudas = supabase.table("deudas_fijas").select("*").order("created_at", desc=False).execute()
+    df_df = pd.DataFrame(res_deudas.data)
+
+    if not df_df.empty:
+        total_monto_real = df_df["monto_real_adeudado"].sum()
+        total_cuotas = df_df["cuota_mensual"].sum()
         
-        estado_actual = row["estado"]
-        if estado_actual == "PAGADO":
-            col_estado.success("PAGADO")
-            if col_btn.button("Marcar Pendiente", key=f"fijo_p_{row['id_mes']}"):
-                supabase.table("historial_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id_mes"]).execute()
-                st.rerun()
-        else:
-            col_estado.warning("PENDIENTE")
-            if col_btn.button("Marcar Pagado", key=f"fijo_c_{row['id_mes']}"):
-                supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
-                st.rerun()
+        col_t1, col_t2 = st.columns(2)
+        col_t1.metric("💰 TOTAL GLOBAL ADEUDADO", f"${total_monto_real:,.2f}")
+        col_t2.metric("🗓️ SUMA DE CUOTAS MENSUALES", f"${total_cuotas:,.2f}")
 
-st.divider()
-
-# --- SECCIÓN 2: OTROS PAGOS (PRÉSTAMOS EXPRÉS / EMERGENTES) ---
-st.subheader("2. OTROS PAGOS (Préstamos / Gastos Emergentes)")
-
-# Formulario para agregar un gasto emergente nuevo
-with st.expander("➕ Agregar nuevo préstamo o pago emergente"):
-    with st.form("form_nuevo_otro"):
-        desc = st.text_input("Descripción del pago (Ej: Préstamo exprés):")
-        monto_ingresado = st.number_input("Monto en $:", min_value=0.0, step=1.0)
-        submit = st.form_submit_button("Guardar Pago")
+        st.subheader("Detalle de Deudas Registradas")
         
-        if submit and desc and monto_ingresado > 0:
-            supabase.table("otros_pagos").insert({
-                "descripcion": desc,
-                "monto": monto_ingresado,
-                "mes": mes_seleccionado,
-                "anio": anio_seleccionado,
-                "estado": "PENDIENTE"
-            }).execute()
-            st.success("Pago agregado correctamente")
-            st.rerun()
+        for idx, row in df_df.iterrows():
+            with st.container():
+                st.markdown(f"### {row['nombre']} — *{row['proveedor']}*")
+                col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns([2, 2, 2, 2, 1])
+                
+                col_d1.write(f"**Tipo:** {row['tipo_deuda']}")
+                col_d2.write(f"**Cuota:** ${row['cuota_mensual']:,.2f}")
+                col_d3.write(f"**Día de Pago:** {row['fecha_pago']}")
+                col_d4.write(f"**Monto Real:** ${row['monto_real_adeudado']:,.2f}")
+                
+                if col_d5.button("🗑️ Eliminar", key=f"del_df_{row['id']}"):
+                    supabase.table("deudas_fijas").delete().eq("id", row["id"]).execute()
+                    st.success("Deuda eliminada")
+                    st.rerun()
+                st.caption(f"Fecha Fin: {row['fecha_fin']}")
+                st.divider()
+    else:
+        st.info("No hay deudas fijas registradas aún. Agrega una desde el formulario superior.")
 
-if not df_otros.empty:
-    for idx, row in df_otros.iterrows():
-        col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
-        col_nom.write(f"**{row['descripcion']}**")
-        col_monto.write(f"${row['monto']:.2f}")
-        
-        if row["estado"] == "PAGADO":
-            col_estado.success("PAGADO")
-            if col_btn.button("Marcar Pendiente", key=f"otro_p_{row['id']}"):
-                supabase.table("otros_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id"]).execute()
+
+# ==========================================
+# PESTAÑA 3: CONFIGURAR PAGOS FIJOS (CATÁLOGO)
+# ==========================================
+with tab_config:
+    st.header("⚙️ Gestión del Catálogo de Pagos Fijos Mensuales")
+    st.write("Agrega o elimina compromisos del listado recurrente mensual.")
+
+    # Formulario para agregar una nueva categoría de Pago Fijo
+    with st.expander("➕ Agregar Nueva Categoría o Deuda al Catálogo"):
+        with st.form("form_nueva_cat_fija"):
+            nom_cat = st.text_input("Nombre del Pago Fijo (Ej: Casa, Agua, Tarjeta BAC):")
+            monto_cat = st.number_input("Monto por Defecto ($):", min_value=0.0, step=10.0)
+            if st.form_submit_button("Añadir al Catálogo") and nom_cat:
+                supabase.table("pagos_fijos").insert({
+                    "nombre": nom_cat,
+                    "monto_defecto": monto_cat
+                }).execute()
+                st.success(f"Categoría '{nom_cat}' añadida correctamente.")
                 st.rerun()
-        else:
-            col_estado.warning("PENDIENTE")
-            if col_btn.button("Marcar Pagado", key=f"otro_c_{row['id']}"):
-                supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
+
+    st.subheader("Catálogo Actual")
+    if not df_fijos.empty:
+        for idx, row in df_fijos.iterrows():
+            col_c1, col_c2, col_c3 = st.columns([4, 3, 2])
+            col_c1.write(f"**{row['nombre']}**")
+            col_c2.write(f"Monto por defecto: **${row['monto_defecto']:.2f}**")
+            
+            if col_c3.button("🗑️ Eliminar", key=f"del_pf_{row['id']}"):
+                # Eliminar de pagos_fijos y su historial
+                supabase.table("historial_pagos").delete().eq("pago_fijo_id", row["id"]).execute()
+                supabase.table("pagos_fijos").delete().eq("id", row["id"]).execute()
+                st.success(f"Categoría '{row['nombre']}' eliminada.")
                 st.rerun()
-else:
-    st.info("No hay pagos emergentes registrados para este mes.")
+    else:
+        st.info("El catálogo de pagos fijos está vacío.")
