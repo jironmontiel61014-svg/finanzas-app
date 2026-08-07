@@ -165,122 +165,122 @@ with tab_control:
 
 
 # ==========================================
-# PESTAÑA 2: ALARMAS Y PRIORIDADES DE PAGO
+# PESTAÑA 2: ALARMAS Y PRIORIDADES DE PAGO (SOLO MESES ANTERIORES ATRASADOS)
 # ==========================================
 with tab_alarmas:
-    st.header("🚨 Alarmas y Prioridades de Pagos Pendientes")
-    st.write(f"Vista consolidada de cuotas atrasadas e impagas hasta **{mes_seleccionado} {anio_seleccionado}**.")
+    st.header("🚨 Alarmas y Prioridades (Atrasos de Meses Anteriores)")
+    st.write(f"Muestra **únicamente** los pagos que quedaron vencidos de meses anteriores a **{mes_seleccionado} {anio_seleccionado}**.")
 
-    meses_evaluados = meses[:idx_mes_actual + 1]
+    # Únicamente tomar los meses estrictamente anteriores al mes seleccionado
+    meses_vencidos = meses[:idx_mes_actual]
 
-    # Cargar todos los pagos fijos pendientes hasta el mes actual
-    res_h_alarm = supabase.table("historial_pagos").select("*").in_("mes", meses_evaluados).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
-    df_h_alarm = pd.DataFrame(res_h_alarm.data)
+    if meses_vencidos:
+        # Cargar pagos fijos pendientes de meses anteriores
+        res_h_alarm = supabase.table("historial_pagos").select("*").in_("mes", meses_vencidos).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
+        df_h_alarm = pd.DataFrame(res_h_alarm.data)
 
-    # Cargar todos los otros pagos pendientes hasta el mes actual
-    res_o_alarm = supabase.table("otros_pagos").select("*").in_("mes", meses_evaluados).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
-    df_o_alarm = pd.DataFrame(res_o_alarm.data)
+        # Cargar otros pagos pendientes de meses anteriores
+        res_o_alarm = supabase.table("otros_pagos").select("*").in_("mes", meses_vencidos).eq("anio", anio_seleccionado).eq("estado", "PENDIENTE").execute()
+        df_o_alarm = pd.DataFrame(res_o_alarm.data)
 
-    lista_resumen = []
+        lista_resumen = []
 
-    # Procesar Pagos Fijos
-    if not df_h_alarm.empty and not df_fijos.empty:
-        df_fijos_alarm = pd.merge(df_fijos, df_h_alarm, left_on="id", right_on="pago_fijo_id")
-        
-        for nombre_pago, group in df_fijos_alarm.groupby("nombre"):
-            cant_cuotas = len(group)
-            meses_list = list(group["mes"])
-            total_monto = group["monto"].sum()
+        # Procesar Pagos Fijos
+        if not df_h_alarm.empty and not df_fijos.empty:
+            df_fijos_alarm = pd.merge(df_fijos, df_h_alarm, left_on="id", right_on="pago_fijo_id")
             
-            # Ordenar meses según la secuencia del año
-            meses_list.sort(key=lambda m: meses.index(m))
+            for nombre_pago, group in df_fijos_alarm.groupby("nombre"):
+                cant_cuotas = len(group)
+                meses_list = list(group["mes"])
+                total_monto = group["monto"].sum()
+                
+                meses_list.sort(key=lambda m: meses.index(m))
+                
+                lista_resumen.append({
+                    "Concepto / Deuda": nombre_pago,
+                    "Tipo": "Pago Fijo",
+                    "Cuotas Pendientes": cant_cuotas,
+                    "Meses Afectados": ", ".join(meses_list),
+                    "Monto Acumulado ($)": total_monto
+                })
+
+        # Procesar Otros Pagos / Emergentes
+        if not df_o_alarm.empty:
+            for desc_pago, group in df_o_alarm.groupby("descripcion"):
+                cant_cuotas = len(group)
+                meses_list = list(group["mes"])
+                total_monto = group["monto"].sum()
+                
+                meses_list.sort(key=lambda m: meses.index(m))
+                
+                lista_resumen.append({
+                    "Concepto / Deuda": desc_pago,
+                    "Tipo": "Préstamo / Emergente",
+                    "Cuotas Pendientes": cant_cuotas,
+                    "Meses Afectados": ", ".join(meses_list),
+                    "Monto Acumulado ($)": total_monto
+                })
+
+        if lista_resumen:
+            df_resumen_alarmas = pd.DataFrame(lista_resumen)
             
-            lista_resumen.append({
-                "Concepto / Deuda": nombre_pago,
-                "Tipo": "Pago Fijo",
-                "Cuotas Pendientes": cant_cuotas,
-                "Meses Afectados": ", ".join(meses_list),
-                "Monto Acumulado ($)": total_monto
-            })
-
-    # Procesar Otros Pagos / Emergentes
-    if not df_o_alarm.empty:
-        for desc_pago, group in df_o_alarm.groupby("descripcion"):
-            cant_cuotas = len(group)
-            meses_list = list(group["mes"])
-            total_monto = group["monto"].sum()
+            total_deudas_pendientes = len(df_resumen_alarmas)
+            monto_total_prioridad = df_resumen_alarmas["Monto Acumulado ($)"].sum()
             
-            meses_list.sort(key=lambda m: meses.index(m))
-            
-            lista_resumen.append({
-                "Concepto / Deuda": desc_pago,
-                "Tipo": "Préstamo / Emergente",
-                "Cuotas Pendientes": cant_cuotas,
-                "Meses Afectados": ", ".join(meses_list),
-                "Monto Acumulado ($)": total_monto
-            })
-
-    if lista_resumen:
-        df_resumen_alarmas = pd.DataFrame(lista_resumen)
-        
-        # Tarjeta de alerta general
-        total_deudas_pendientes = len(df_resumen_alarmas)
-        monto_total_prioridad = df_resumen_alarmas["Monto Acumulado ($)"].sum()
-        
-        st.markdown(
-            f"""
-            <div style="background-color: #FFEBEE; border-left: 6px solid #D32F2F; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
-                <h4 style="margin:0; color: #C62828;">⚠️ ATENCIÓN: Tienes {total_deudas_pendientes} compromiso(s) con cuotas pendientes</h4>
-                <p style="margin: 5px 0 0 0; font-size: 16px; color: #B71C1C;">
-                    El monto acumulado de tus saldos pendientes hasta <strong>{mes_seleccionado}</strong> es de <strong>${monto_total_prioridad:,.2f}</strong>.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.subheader("📋 Tabla de Prioridades de Pago")
-        
-        # Mostrar como Tabla interactiva formateada
-        st.dataframe(
-            df_resumen_alarmas,
-            column_config={
-                "Concepto / Deuda": st.column_config.TextColumn("Concepto / Deuda"),
-                "Tipo": st.column_config.TextColumn("Tipo de Cargo"),
-                "Cuotas Pendientes": st.column_config.NumberColumn("Cuotas Pendientes", format="%d cuota(s)"),
-                "Meses Afectados": st.column_config.TextColumn("Meses Pendientes"),
-                "Monto Acumulado ($)": st.column_config.NumberColumn("Monto Acumulado", format="$%.2f")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-
-        st.divider()
-        st.subheader("📌 Desglose Individual de Alarmas")
-
-        # Vista en formato Tarjetas Visuales
-        for item in lista_resumen:
             st.markdown(
                 f"""
-                <div style="background-color: #FFFFFF; border: 1px solid #E0E0E0; border-top: 4px solid #D32F2F; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <h4 style="margin: 0; color: #212121;">{item['Concepto / Deuda']} <span style="font-size: 12px; color: #757575;">({item['Tipo']})</span></h4>
-                        <span style="background-color: #FFCDD2; color: #B71C1C; font-weight: bold; padding: 4px 10px; border-radius: 12px; font-size: 13px;">
-                            {item['Cuotas Pendientes']} cuota(s) pendiente(s)
-                        </span>
-                    </div>
-                    <p style="margin: 10px 0 5px 0; font-size: 14px; color: #424242;">
-                        <strong>Meses acumulados:</strong> <span style="color: #D32F2F; font-weight: bold;">{item['Meses Afectados']}</span>
-                    </p>
-                    <p style="margin: 0; font-size: 16px; color: #212121;">
-                        <strong>Monto Total Pendiente:</strong> <span style="font-size: 18px; color: #D32F2F; font-weight: bold;">${item['Monto Acumulado ($)']:,.2f}</span>
+                <div style="background-color: #FFEBEE; border-left: 6px solid #D32F2F; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+                    <h4 style="margin:0; color: #C62828;">⚠️ ATENCIÓN: Tienes {total_deudas_pendientes} compromiso(s) con cuotas atrasadas</h4>
+                    <p style="margin: 5px 0 0 0; font-size: 16px; color: #B71C1C;">
+                        El monto vencido acumulado de meses anteriores a <strong>{mes_seleccionado}</strong> es de <strong>${monto_total_prioridad:,.2f}</strong>.
                     </p>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
+
+            st.subheader("📋 Tabla de Prioridades de Pago")
+            
+            st.dataframe(
+                df_resumen_alarmas,
+                column_config={
+                    "Concepto / Deuda": st.column_config.TextColumn("Concepto / Deuda"),
+                    "Tipo": st.column_config.TextColumn("Tipo de Cargo"),
+                    "Cuotas Pendientes": st.column_config.NumberColumn("Cuotas Atrasadas", format="%d cuota(s)"),
+                    "Meses Afectados": st.column_config.TextColumn("Meses Pendientes"),
+                    "Monto Acumulado ($)": st.column_config.NumberColumn("Monto Atrasado", format="$%.2f")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+            st.divider()
+            st.subheader("📌 Desglose Individual de Alarmas")
+
+            for item in lista_resumen:
+                st.markdown(
+                    f"""
+                    <div style="background-color: #FFFFFF; border: 1px solid #E0E0E0; border-top: 4px solid #D32F2F; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h4 style="margin: 0; color: #212121;">{item['Concepto / Deuda']} <span style="font-size: 12px; color: #757575;">({item['Tipo']})</span></h4>
+                            <span style="background-color: #FFCDD2; color: #B71C1C; font-weight: bold; padding: 4px 10px; border-radius: 12px; font-size: 13px;">
+                                {item['Cuotas Pendientes']} cuota(s) atrasada(s)
+                            </span>
+                        </div>
+                        <p style="margin: 10px 0 5px 0; font-size: 14px; color: #424242;">
+                            <strong>Meses acumulados:</strong> <span style="color: #D32F2F; font-weight: bold;">{item['Meses Afectados']}</span>
+                        </p>
+                        <p style="margin: 0; font-size: 16px; color: #212121;">
+                            <strong>Monto Total Vencido:</strong> <span style="font-size: 18px; color: #D32F2F; font-weight: bold;">${item['Monto Acumulado ($)']:,.2f}</span>
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.success("🎉 ¡Excelente Lauren! No tienes ninguna cuota atrasada de meses anteriores.")
     else:
-        st.success("🎉 ¡Felicidades Lauren! No tienes ningún pago atrasado ni cuotas pendientes acumuladas.")
+        st.info("Enero es el primer mes del año, no existen meses anteriores acumulados.")
 
 
 # ==========================================
