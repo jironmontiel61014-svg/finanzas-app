@@ -21,8 +21,9 @@ def editar_pago_fijo_dialog(pago_fijo_id, historial_id, nombre_actual, monto_act
         nuevo_nom = st.text_input("Nombre:", value=nombre_actual)
         nuevo_monto = st.number_input("Monto este mes ($):", value=float(monto_actual), step=5.0)
         if st.form_submit_button("Guardar Cambios"):
+            nom_limpio = nuevo_nom.replace("*", "").strip()
             # Actualizar catálogo general
-            supabase.table("pagos_fijos").update({"nombre": nuevo_nom}).eq("id", pago_fijo_id).execute()
+            supabase.table("pagos_fijos").update({"nombre": nom_limpio}).eq("id", pago_fijo_id).execute()
             # Actualizar monto específico del mes
             supabase.table("historial_pagos").update({"monto": nuevo_monto}).eq("id", historial_id).execute()
             st.success("Actualizado correctamente")
@@ -103,7 +104,7 @@ with tab_control:
             <div style="background-color: #FFF3CD; border-left: 6px solid #FFC107; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
                 <h4 style="margin:0; color: #856404;">📌 Resumen Personal de Pagos Acumulados</h4>
                 <p style="margin: 10px 0 0 0; font-size: 16px; color: #856404; line-height: 1.5;">
-                    <strong>Lauren</strong> debes la cantidad de <strong>${pendiente_meses_anteriores:,.2f}</strong> de los meses anteriores, sumado esa cantidad con lo proyectado de este mes ({mes_seleccionado}) más otros préstamos se hace un total de <strong>${total_global_conseguir:,.2f}</strong>.
+                    Debes la cantidad de <strong>${pendiente_meses_anteriores:,.2f}</strong> de los meses anteriores, sumado esa cantidad con lo proyectado de este mes ({mes_seleccionado}) más otros préstamos se hace un total de <strong>${total_global_conseguir:,.2f}</strong>.
                 </p>
             </div>
             """,
@@ -115,7 +116,7 @@ with tab_control:
             <div style="background-color: #D4EDDA; border-left: 6px solid #28A745; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
                 <h4 style="margin:0; color: #155724;">👏 ¡Al Día con Meses Anteriores!</h4>
                 <p style="margin: 10px 0 0 0; font-size: 16px; color: #155724; line-height: 1.5;">
-                    <strong>Lauren</strong> no tienes deudas pendientes de meses anteriores. Para el mes de <strong>{mes_seleccionado}</strong> el total proyectado a conseguir es de <strong>${total_global_conseguir:,.2f}</strong>.
+                    No tienes deudas pendientes de meses anteriores. Para el mes de <strong>{mes_seleccionado}</strong> el total proyectado a conseguir es de <strong>${total_global_conseguir:,.2f}</strong>.
                 </p>
             </div>
             """,
@@ -140,8 +141,9 @@ with tab_control:
             nuevo_nom_fijo = st.text_input("Nombre del Pago Fijo (Ej: Internet, Seguro):")
             nuevo_monto_fijo = st.number_input("Monto por defecto ($):", min_value=0.0, step=5.0)
             if st.form_submit_button("Guardar Pago Fijo") and nuevo_nom_fijo:
+                nom_limpio = nuevo_nom_fijo.replace("*", "").strip()
                 res_ins = supabase.table("pagos_fijos").insert({
-                    "nombre": nuevo_nom_fijo,
+                    "nombre": nom_limpio,
                     "monto_defecto": nuevo_monto_fijo
                 }).execute()
                 
@@ -155,30 +157,68 @@ with tab_control:
                         "estado": "PENDIENTE"
                     }).execute()
 
-                st.success(f"Pago fijo '{nuevo_nom_fijo}' agregado correctamente.")
+                st.success(f"Pago fijo '{nom_limpio}' agregado correctamente.")
                 st.rerun()
 
     if not df_completo.empty:
+        # Estilos CSS para centrado vertical y cajas de estado uniformes
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stColumn"] {
+                display: flex;
+                align-items: center;
+            }
+            .badge-pagado {
+                background-color: #D4EDDA;
+                color: #155724;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                display: inline-block;
+                width: 100%;
+                text-align: center;
+            }
+            .badge-pendiente {
+                background-color: #F8D7DA;
+                color: #721C24;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                display: inline-block;
+                width: 100%;
+                text-align: center;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
         for idx, row in df_completo.iterrows():
             col_nom, col_monto, col_estado, col_btn, col_edit, col_del = st.columns([3, 2, 2, 2, 1, 1])
             
-            col_nom.write(f"**{row['nombre']}**")
+            # Limpiar nombre para eliminar asteriscos residuales guardados previamente
+            nombre_limpio = str(row['nombre']).replace("*", "").strip()
+            
+            col_nom.write(f"**{nombre_limpio}**")
             col_monto.write(f"${row['monto']:.2f}")
 
             if row["estado"] == "PAGADO":
-                col_estado.success("PAGADO")
+                col_estado.markdown('<div class="badge-pagado">PAGADO</div>', unsafe_allow_html=True)
                 if col_btn.button("Marcar Pendiente", key=f"fijo_p_{row['id_mes']}"):
                     supabase.table("historial_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
             else:
-                col_estado.error("PENDIENTE")
+                col_estado.markdown('<div class="badge-pendiente">PENDIENTE</div>', unsafe_allow_html=True)
                 if col_btn.button("Marcar Pagado", key=f"fijo_c_{row['id_mes']}"):
                     supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
 
             # Botón de edición que abre la ventana emergente modal
             if col_edit.button("✏️", key=f"btn_edit_dialog_{row['id_mes']}", help="Editar este pago"):
-                editar_pago_fijo_dialog(row["id_base"], row["id_mes"], row["nombre"], row["monto"])
+                editar_pago_fijo_dialog(row["id_base"], row["id_mes"], nombre_limpio, row["monto"])
 
             # Opción para eliminar el pago fijo
             if col_del.button("🗑️", key=f"del_pf_ctrl_{row['id_base']}", help="Eliminar este pago fijo"):
@@ -196,22 +236,25 @@ with tab_control:
             desc = st.text_input("Descripción del pago:")
             monto_i = st.number_input("Monto en $:", min_value=0.0, step=1.0)
             if st.form_submit_button("Guardar Pago") and desc and monto_i > 0:
-                supabase.table("otros_pagos").insert({"descripcion": desc, "monto": monto_i, "mes": mes_seleccionado, "anio": anio_seleccionado, "estado": "PENDIENTE"}).execute()
+                desc_limpia = desc.replace("*", "").strip()
+                supabase.table("otros_pagos").insert({"descripcion": desc_limpia, "monto": monto_i, "mes": mes_seleccionado, "anio": anio_seleccionado, "estado": "PENDIENTE"}).execute()
                 st.success("Guardado")
                 st.rerun()
 
     if not df_otros.empty:
         for idx, row in df_otros.iterrows():
             col_nom, col_monto, col_estado, col_btn, col_del = st.columns([3, 2, 2, 2, 1])
-            col_nom.write(f"**{row['descripcion']}**")
+            desc_limpia = str(row['descripcion']).replace("*", "").strip()
+            col_nom.write(f"**{desc_limpia}**")
             col_monto.write(f"${row['monto']:.2f}")
+            
             if row["estado"] == "PAGADO":
-                col_estado.success("PAGADO")
+                col_estado.markdown('<div class="badge-pagado">PAGADO</div>', unsafe_allow_html=True)
                 if col_btn.button("Marcar Pendiente", key=f"otro_p_{row['id']}"):
                     supabase.table("otros_pagos").update({"estado": "PENDIENTE"}).eq("id", row["id"]).execute()
                     st.rerun()
             else:
-                col_estado.error("PENDIENTE")
+                col_estado.markdown('<div class="badge-pendiente">PENDIENTE</div>', unsafe_allow_html=True)
                 if col_btn.button("Marcar Pagado", key=f"otro_c_{row['id']}"):
                     supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
                     st.rerun()
@@ -249,8 +292,9 @@ with tab_alarmas:
                 
                 meses_list.sort(key=lambda m: meses.index(m))
                 
+                nombre_clean = str(nombre_pago).replace("*", "").strip()
                 lista_resumen.append({
-                    "Concepto / Deuda": nombre_pago,
+                    "Concepto / Deuda": nombre_clean,
                     "Tipo": "Pago Fijo",
                     "Cuotas Pendientes": cant_cuotas,
                     "Meses Afectados": ", ".join(meses_list),
@@ -265,8 +309,9 @@ with tab_alarmas:
                 
                 meses_list.sort(key=lambda m: meses.index(m))
                 
+                desc_clean = str(desc_pago).replace("*", "").strip()
                 lista_resumen.append({
-                    "Concepto / Deuda": desc_pago,
+                    "Concepto / Deuda": desc_clean,
                     "Tipo": "Préstamo / Emergente",
                     "Cuotas Pendientes": cant_cuotas,
                     "Meses Afectados": ", ".join(meses_list),
@@ -330,7 +375,7 @@ with tab_alarmas:
                     unsafe_allow_html=True
                 )
         else:
-            st.success("🎉 ¡Excelente Lauren! No tienes ninguna cuota atrasada de meses anteriores.")
+            st.success("🎉 ¡Excelente! No tienes ninguna cuota atrasada de meses anteriores.")
     else:
         st.info("Enero es el primer mes del año, no existen meses anteriores acumulados.")
 
@@ -358,16 +403,17 @@ with tab_deudas_fijas:
             monto_real = c_monto_r.number_input("Monto Real Adeudado ($):", min_value=0.0, step=50.0)
 
             if st.form_submit_button("Guardar Deuda Fija") and proveedor and nombre_deuda:
+                nom_deuda_clean = nombre_deuda.replace("*", "").strip()
                 supabase.table("deudas_fijas").insert({
                     "proveedor": proveedor,
                     "tipo_deuda": tipo_deuda,
-                    "nombre": nombre_deuda,
+                    "nombre": nom_deuda_clean,
                     "cuota_mensual": cuota_m,
                     "fecha_pago": fecha_pago,
                     "fecha_fin": str(fecha_fin),
                     "monto_real_adeudado": monto_real
                 }).execute()
-                st.success(f"Deuda '{nombre_deuda}' registrada con éxito.")
+                st.success(f"Deuda '{nom_deuda_clean}' registrada con éxito.")
                 st.rerun()
 
     res_deudas = supabase.table("deudas_fijas").select("*").order("created_at", desc=False).execute()
@@ -401,7 +447,8 @@ with tab_deudas_fijas:
         
         for idx, row in df_df.iterrows():
             with st.container():
-                st.markdown(f"### {row['nombre']} — *{row['proveedor']}*")
+                d_nombre_clean = str(row['nombre']).replace("*", "").strip()
+                st.markdown(f"### {d_nombre_clean} — *{row['proveedor']}*")
                 col_d1, col_d2, col_d3, col_d4 = st.columns([2, 2, 2, 2])
                 
                 col_d1.write(f"**Tipo:** {row['tipo_deuda']}")
@@ -414,16 +461,17 @@ with tab_deudas_fijas:
                     with st.expander("✏️ Editar Deuda"):
                         with st.form(f"form_edit_deuda_{row['id']}"):
                             e_prov = st.text_input("Proveedor:", value=row['proveedor'])
-                            e_nom = st.text_input("Nombre Deuda:", value=row['nombre'])
+                            e_nom = st.text_input("Nombre Deuda:", value=d_nombre_clean)
                             e_tipo = st.selectbox("Tipo:", ["Tarjeta de Crédito", "Préstamo Bancario", "Préstamo Personal", "Servicio Fijo", "Otro"], index=0)
                             e_cuota = st.number_input("Cuota Mensual ($):", value=float(row['cuota_mensual']), step=10.0)
                             e_fecha_p = st.selectbox("Fecha Pago:", ["15 de cada mes", "30 de cada mes"], index=0 if row['fecha_pago']=="15 de cada mes" else 1)
                             e_monto_r = st.number_input("Monto Real Adeudado ($):", value=float(row['monto_real_adeudado']), step=50.0)
                             
                             if st.form_submit_button("Guardar Cambios"):
+                                e_nom_clean = e_nom.replace("*", "").strip()
                                 supabase.table("deudas_fijas").update({
                                     "proveedor": e_prov,
-                                    "nombre": e_nom,
+                                    "nombre": e_nom_clean,
                                     "tipo_deuda": e_tipo,
                                     "cuota_mensual": e_cuota,
                                     "fecha_pago": e_fecha_p,
@@ -456,28 +504,31 @@ with tab_config:
             nom_cat = st.text_input("Nombre del Pago Fijo (Ej: Casa, Agua, Tarjeta BAC):")
             monto_cat = st.number_input("Monto por Defecto ($):", min_value=0.0, step=10.0)
             if st.form_submit_button("Añadir al Catálogo") and nom_cat:
+                cat_clean = nom_cat.replace("*", "").strip()
                 supabase.table("pagos_fijos").insert({
-                    "nombre": nom_cat,
+                    "nombre": cat_clean,
                     "monto_defecto": monto_cat
                 }).execute()
-                st.success(f"Categoría '{nom_cat}' añadida correctamente.")
+                st.success(f"Categoría '{cat_clean}' añadida correctamente.")
                 st.rerun()
 
     st.subheader("Catálogo Actual")
     if not df_fijos.empty:
         for idx, row in df_fijos.iterrows():
             col_c1, col_c2, col_c3, col_c4 = st.columns([3, 2, 2, 2])
-            col_c1.write(f"**{row['nombre']}**")
+            cat_nom_clean = str(row['nombre']).replace("*", "").strip()
+            col_c1.write(f"**{cat_nom_clean}**")
             col_c2.write(f"Monto por defecto: **${row['monto_defecto']:.2f}**")
             
             with col_c3:
                 with st.expander("✏️ Modificar"):
                     with st.form(f"form_mod_pf_{row['id']}"):
-                        mod_nombre = st.text_input("Nombre:", value=row['nombre'])
+                        mod_nombre = st.text_input("Nombre:", value=cat_nom_clean)
                         mod_monto = st.number_input("Monto Defecto ($):", value=float(row['monto_defecto']), step=5.0)
                         if st.form_submit_button("Guardar"):
+                            mod_clean = mod_nombre.replace("*", "").strip()
                             supabase.table("pagos_fijos").update({
-                                "nombre": mod_nombre,
+                                "nombre": mod_clean,
                                 "monto_defecto": mod_monto
                             }).eq("id", row['id']).execute()
                             st.success("Modificado")
@@ -487,7 +538,7 @@ with tab_config:
                 if st.button("🗑️ Eliminar", key=f"del_pf_{row['id']}"):
                     supabase.table("historial_pagos").delete().eq("pago_fijo_id", row["id"]).execute()
                     supabase.table("pagos_fijos").delete().eq("id", row["id"]).execute()
-                    st.success(f"Categoría '{row['nombre']}' eliminada.")
+                    st.success(f"Categoría '{cat_nom_clean}' eliminada.")
                     st.rerun()
     else:
         st.info("El catálogo de pagos fijos está vacío.")
