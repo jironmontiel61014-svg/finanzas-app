@@ -118,11 +118,40 @@ with tab_control:
 
     # LISTADO PAGOS FIJOS
     st.subheader(f"1. Pagos Fijos Mensuales - {mes_seleccionado}")
+
+    # Formulario para agregar un nuevo Pago Fijo directamente en Control Mensual
+    with st.expander("➕ Agregar nuevo pago fijo"):
+        with st.form("form_nuevo_pago_fijo_ctrl"):
+            nuevo_nom_fijo = st.text_input("Nombre del Pago Fijo (Ej: Internet, Seguro):")
+            nuevo_monto_fijo = st.number_input("Monto por defecto ($):", min_value=0.0, step=5.0)
+            if st.form_submit_button("Guardar Pago Fijo") and nuevo_nom_fijo:
+                # 1. Insertar en catálogo general
+                res_ins = supabase.table("pagos_fijos").insert({
+                    "nombre": nuevo_nom_fijo,
+                    "monto_defecto": nuevo_monto_fijo
+                }).execute()
+                
+                # 2. Asignar de inmediato al mes seleccionado actual
+                if res_ins.data:
+                    pago_fijo_creado_id = res_ins.data[0]["id"]
+                    supabase.table("historial_pagos").insert({
+                        "pago_fijo_id": pago_fijo_creado_id,
+                        "mes": mes_seleccionado,
+                        "anio": anio_seleccionado,
+                        "monto": nuevo_monto_fijo,
+                        "estado": "PENDIENTE"
+                    }).execute()
+
+                st.success(f"Pago fijo '{nuevo_nom_fijo}' agregado correctamente.")
+                st.rerun()
+
     if not df_completo.empty:
         for idx, row in df_completo.iterrows():
-            col_nom, col_monto, col_estado, col_btn = st.columns([3, 2, 2, 2])
+            col_nom, col_monto, col_estado, col_btn, col_edit, col_del = st.columns([3, 2, 2, 2, 1, 1])
+            
             col_nom.write(f"**{row['nombre']}**")
             col_monto.write(f"${row['monto']:.2f}")
+
             if row["estado"] == "PAGADO":
                 col_estado.success("PAGADO")
                 if col_btn.button("Marcar Pendiente", key=f"fijo_p_{row['id_mes']}"):
@@ -133,6 +162,27 @@ with tab_control:
                 if col_btn.button("Marcar Pagado", key=f"fijo_c_{row['id_mes']}"):
                     supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
+
+            # Opción para editar el monto o nombre de este pago fijo
+            with col_edit:
+                with st.expander("✏️", help="Editar este pago fijo"):
+                    with st.form(f"form_edit_pf_ctrl_{row['id_mes']}"):
+                        edit_nombre = st.text_input("Nombre:", value=row['nombre'])
+                        edit_monto = st.number_input("Monto este mes ($):", value=float(row['monto']), step=5.0)
+                        if st.form_submit_button("Guardar"):
+                            # Actualizar catálogo general
+                            supabase.table("pagos_fijos").update({"nombre": edit_nombre}).eq("id", row["id_base"]).execute()
+                            # Actualizar monto específico del mes
+                            supabase.table("historial_pagos").update({"monto": edit_monto}).eq("id", row["id_mes"]).execute()
+                            st.success("Actualizado")
+                            st.rerun()
+
+            # Opción para eliminar el pago fijo
+            if col_del.button("🗑️", key=f"del_pf_ctrl_{row['id_base']}", help="Eliminar este pago fijo"):
+                supabase.table("historial_pagos").delete().eq("pago_fijo_id", row["id_base"]).execute()
+                supabase.table("pagos_fijos").delete().eq("id", row["id_base"]).execute()
+                st.success("Pago fijo eliminado")
+                st.rerun()
 
     st.divider()
 
