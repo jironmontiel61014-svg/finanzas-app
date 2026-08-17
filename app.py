@@ -13,6 +13,21 @@ supabase: Client = create_client(url, key)
 
 st.title("💼 Sistema de Control Financiero")
 
+# --- FUNCIONES DE DIÁLOGO PARA EDICIÓN ---
+@st.dialog("✏️ Editar Pago Fijo")
+def editar_pago_fijo_dialog(pago_fijo_id, historial_id, nombre_actual, monto_actual):
+    st.write(f"Modificar datos de **{nombre_actual}**:")
+    with st.form("form_edit_dialog"):
+        nuevo_nom = st.text_input("Nombre:", value=nombre_actual)
+        nuevo_monto = st.number_input("Monto este mes ($):", value=float(monto_actual), step=5.0)
+        if st.form_submit_button("Guardar Cambios"):
+            # Actualizar catálogo general
+            supabase.table("pagos_fijos").update({"nombre": nuevo_nom}).eq("id", pago_fijo_id).execute()
+            # Actualizar monto específico del mes
+            supabase.table("historial_pagos").update({"monto": nuevo_monto}).eq("id", historial_id).execute()
+            st.success("Actualizado correctamente")
+            st.rerun()
+
 # --- NAVEGACIÓN POR PESTAÑAS ---
 tab_control, tab_alarmas, tab_deudas_fijas, tab_config = st.tabs([
     "📊 Control Mensual", 
@@ -125,13 +140,11 @@ with tab_control:
             nuevo_nom_fijo = st.text_input("Nombre del Pago Fijo (Ej: Internet, Seguro):")
             nuevo_monto_fijo = st.number_input("Monto por defecto ($):", min_value=0.0, step=5.0)
             if st.form_submit_button("Guardar Pago Fijo") and nuevo_nom_fijo:
-                # 1. Insertar en catálogo general
                 res_ins = supabase.table("pagos_fijos").insert({
                     "nombre": nuevo_nom_fijo,
                     "monto_defecto": nuevo_monto_fijo
                 }).execute()
                 
-                # 2. Asignar de inmediato al mes seleccionado actual
                 if res_ins.data:
                     pago_fijo_creado_id = res_ins.data[0]["id"]
                     supabase.table("historial_pagos").insert({
@@ -163,19 +176,9 @@ with tab_control:
                     supabase.table("historial_pagos").update({"estado": "PAGADO"}).eq("id", row["id_mes"]).execute()
                     st.rerun()
 
-            # Opción para editar el monto o nombre de este pago fijo
-            with col_edit:
-                with st.expander("✏️", help="Editar este pago fijo"):
-                    with st.form(f"form_edit_pf_ctrl_{row['id_mes']}"):
-                        edit_nombre = st.text_input("Nombre:", value=row['nombre'])
-                        edit_monto = st.number_input("Monto este mes ($):", value=float(row['monto']), step=5.0)
-                        if st.form_submit_button("Guardar"):
-                            # Actualizar catálogo general
-                            supabase.table("pagos_fijos").update({"nombre": edit_nombre}).eq("id", row["id_base"]).execute()
-                            # Actualizar monto específico del mes
-                            supabase.table("historial_pagos").update({"monto": edit_monto}).eq("id", row["id_mes"]).execute()
-                            st.success("Actualizado")
-                            st.rerun()
+            # Botón de edición que abre la ventana emergente modal
+            if col_edit.button("✏️", key=f"btn_edit_dialog_{row['id_mes']}", help="Editar este pago"):
+                editar_pago_fijo_dialog(row["id_base"], row["id_mes"], row["nombre"], row["monto"])
 
             # Opción para eliminar el pago fijo
             if col_del.button("🗑️", key=f"del_pf_ctrl_{row['id_base']}", help="Eliminar este pago fijo"):
@@ -213,14 +216,13 @@ with tab_control:
                     supabase.table("otros_pagos").update({"estado": "PAGADO"}).eq("id", row["id"]).execute()
                     st.rerun()
             
-            # Botón para eliminar registro duplicado o no deseado
             if col_del.button("🗑️", key=f"del_otro_{row['id']}", help="Eliminar este pago"):
                 supabase.table("otros_pagos").delete().eq("id", row["id"]).execute()
                 st.rerun()
 
 
 # ==========================================
-# PESTAÑA 2: ALARMAS Y PRIORIDADES DE PAGO (SOLO MESES ANTERIORES ATRASADOS)
+# PESTAÑA 2: ALARMAS Y PRIORIDADES DE PAGO
 # ==========================================
 with tab_alarmas:
     st.header("🚨 Alarmas y Prioridades (Atrasos de Meses Anteriores)")
